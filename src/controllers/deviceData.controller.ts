@@ -55,7 +55,7 @@ export const deviceDataController = {
       // Update device status
       await deviceModel.update(device.id, {
         last_sync: new Date(),
-        battery_level: data.batteryLevel,
+        battery_level: data.batteryLevel || device.battery_level,
         status: 'active'
       });
       
@@ -74,17 +74,21 @@ export const deviceDataController = {
         );
       }
       
-      // Store sensor data
-      await sensorDataModel.create(
+      // Process and store sensor data based on what's in the payload
+      // This adapts to the new database structure
+      await sensorDataModel.createAllSensorData(
         sleepData.id,
         new Date(timestamp),
         {
-          ecg: data.ecg,
-          oxygen: data.oxygen,
-          thorax: data.thorax,
-          breathing: data.breathing,
-          heart_rate: data.heartRate,
-          has_apnea_event: data.hasApneaEvent
+          ecg_mv: data.ecg, // ECG in mV
+          spo2: data.oxygen || data.spo2, // Support both old and new field names
+          heart_rate: data.heartRate || data.bpm, // Support both old and new field names
+          raw_ir: data.raw_ir,
+          raw_red: data.raw_red,
+          piezoelectric_voltage: data.thorax || data.piezoelectric_voltage, // Support both old and new field names
+          radar_amplitude: data.breathing || data.radar_amplitude, // Support both old and new field names
+          has_apnea_event: data.hasApneaEvent || false,
+          // Assuming we don't have severity and duration in the basic payload
         }
       );
       
@@ -137,20 +141,22 @@ export const deviceDataController = {
         );
       }
       
-      // Prepare batch sensor data
+      // Prepare batch sensor data for the new database structure
       const sensorDataBatch = batchData.map((item: any) => ({
         sleep_data_id: sleepData.id,
         timestamp: new Date(item.timestamp),
-        ecg: item.data?.ecg,
-        oxygen: item.data?.oxygen,
-        thorax: item.data?.thorax,
-        breathing: item.data?.breathing,
-        heart_rate: item.data?.heartRate,
+        ecg_mv: item.data?.ecg,
+        spo2: item.data?.oxygen || item.data?.spo2,
+        heart_rate: item.data?.heartRate || item.data?.bpm,
+        raw_ir: item.data?.raw_ir,
+        raw_red: item.data?.raw_red,
+        piezoelectric_voltage: item.data?.thorax || item.data?.piezoelectric_voltage,
+        radar_amplitude: item.data?.breathing || item.data?.radar_amplitude,
         has_apnea_event: item.data?.hasApneaEvent || false
       }));
       
-      // Store sensor data in batch
-      const insertedCount = await sensorDataModel.batchCreate(sensorDataBatch);
+      // Store sensor data in batch using the new structure
+      const insertedCount = await sensorDataModel.batchCreateAllSensorData(sensorDataBatch);
       
       return res.status(200).json({ 
         message: 'Batch data received successfully',

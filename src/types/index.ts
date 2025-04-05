@@ -99,6 +99,7 @@ export interface SleepEvent {
   created_at: Date;
 }
 
+// Legacy SensorData interface for backward compatibility
 export interface SensorData {
   id: number;
   sleep_data_id: number;
@@ -110,6 +111,68 @@ export interface SensorData {
   heart_rate?: number;
   has_apnea_event: boolean;
   created_at: Date;
+}
+
+// New interfaces for the updated database structure
+export interface EcgData {
+  id: number;
+  sleep_data_id: number;
+  record_time: Date;
+  ecg_mv?: number;
+  created_at: Date;
+}
+
+export interface PulseOxData {
+  id: number;
+  sleep_data_id: number;
+  record_time: Date;
+  spo2?: number;
+  heart_rate?: number;
+  raw_ir?: number;
+  raw_red?: number;
+  created_at: Date;
+}
+
+export interface ThoracicData {
+  id: number;
+  sleep_data_id: number;
+  record_time: Date;
+  piezoelectric_voltage?: number;
+  created_at: Date;
+}
+
+export interface BreathingData {
+  id: number;
+  sleep_data_id: number;
+  record_time: Date;
+  radar_amplitude?: number;
+  created_at: Date;
+}
+
+export interface ApneaEvent {
+  id: number;
+  sleep_data_id: number;
+  record_time: Date;
+  has_apnea_event: boolean;
+  severity?: SeverityLevel;
+  duration?: number;
+  created_at: Date;
+}
+
+// Combined sensor data interface
+export interface CombinedSensorData {
+  sleep_data_id: number;
+  record_time: Date;
+  ecg_mv?: number;
+  spo2?: number;
+  heart_rate?: number;
+  raw_ir?: number;
+  raw_red?: number;
+  piezoelectric_voltage?: number;
+  radar_amplitude?: number;
+  has_apnea_event: boolean;
+  apnea_severity?: SeverityLevel;
+  apnea_duration?: number;
 }
 
 export interface Notification {

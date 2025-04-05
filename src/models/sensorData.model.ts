@@ -2,91 +2,422 @@ import pool from '../config/db';
 import { SensorData } from '../types';
 
 export const sensorDataModel = {
-  async create(
+  // Method to record ECG data
+  async createEcgData(
+    sleepDataId: number,
+    timestamp: Date,
+    ecgMv: number | null
+  ): Promise<any> {
+    if (ecgMv === undefined || ecgMv === null) return null;
+    
+    const result = await pool.query(
+      `INSERT INTO ecg_data 
+       (sleep_data_id, record_time, ecg_mv) 
+       VALUES ($1, $2, $3) 
+       RETURNING *`,
+      [sleepDataId, timestamp, ecgMv]
+    );
+    
+    return result.rows[0];
+  },
+
+  // Method to record pulse oximeter data
+  async createPulseOxData(
     sleepDataId: number,
     timestamp: Date,
     data: {
-      ecg?: number | null;
-      oxygen?: number | null;
-      thorax?: number | null;
-      breathing?: number | null;
+      spo2?: number | null;
       heart_rate?: number | null;
-      has_apnea_event?: boolean;
+      raw_ir?: number | null;
+      raw_red?: number | null;
     }
-  ): Promise<SensorData> {
-    // Pastikan nilai yang masuk ke database tidak undefined
-    const ecg = data.ecg !== undefined ? data.ecg : null;
-    const oxygen = data.oxygen !== undefined ? data.oxygen : null;
-    const thorax = data.thorax !== undefined ? data.thorax : null;
-    const breathing = data.breathing !== undefined ? data.breathing : null;
-    const heart_rate = data.heart_rate !== undefined ? data.heart_rate : null;
-    const has_apnea_event = data.has_apnea_event || false;
-
+  ): Promise<any> {
+    // Only insert if at least one value is present
+    if (Object.values(data).every(v => v === undefined || v === null)) return null;
+    
     const result = await pool.query(
-      `INSERT INTO sensor_data 
-       (sleep_data_id, timestamp, ecg, oxygen, thorax, breathing, heart_rate, has_apnea_event) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) 
+      `INSERT INTO pulse_ox_data 
+       (sleep_data_id, record_time, spo2, heart_rate, raw_ir, raw_red) 
+       VALUES ($1, $2, $3, $4, $5, $6) 
        RETURNING *`,
       [
         sleepDataId,
         timestamp,
-        ecg,
-        oxygen,
-        thorax,
-        breathing,
-        heart_rate,
-        has_apnea_event
+        data.spo2 || null,
+        data.heart_rate || null,
+        data.raw_ir || null,
+        data.raw_red || null
       ]
     );
     
     return result.rows[0];
   },
-  
-  async batchCreate(sensorDataArray: {
-    sleep_data_id: number;
-    timestamp: Date;
-    ecg?: number | null;
-    oxygen?: number | null;
-    thorax?: number | null;
-    breathing?: number | null;
-    heart_rate?: number | null;
-    has_apnea_event?: boolean;
-  }[]): Promise<number> {
-    // Jika array kosong, langsung return 0
-    if (sensorDataArray.length === 0) return 0;
+
+  // Method to record thoracic movement data
+  async createThoracicData(
+    sleepDataId: number,
+    timestamp: Date,
+    piezoelectricVoltage: number | null
+  ): Promise<any> {
+    if (piezoelectricVoltage === undefined || piezoelectricVoltage === null) return null;
     
-    // Buat array parameter dan placeholders untuk prepared statement
-    const values: any[] = [];
-    const placeholders: string[] = [];
-    let paramIndex = 1;
+    const result = await pool.query(
+      `INSERT INTO thoracic_data 
+       (sleep_data_id, record_time, piezoelectric_voltage) 
+       VALUES ($1, $2, $3) 
+       RETURNING *`,
+      [sleepDataId, timestamp, piezoelectricVoltage]
+    );
     
-    sensorDataArray.forEach((data) => {
-      placeholders.push(`($${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++})`);
-      
-      values.push(
-        data.sleep_data_id,
-        data.timestamp,
-        data.ecg !== undefined ? data.ecg : null,
-        data.oxygen !== undefined ? data.oxygen : null,
-        data.thorax !== undefined ? data.thorax : null,
-        data.breathing !== undefined ? data.breathing : null,
-        data.heart_rate !== undefined ? data.heart_rate : null,
-        data.has_apnea_event === true
-      );
-    });
+    return result.rows[0];
+  },
+
+  // Method to record breathing pattern data
+  async createBreathingData(
+    sleepDataId: number,
+    timestamp: Date,
+    radarAmplitude: number | null
+  ): Promise<any> {
+    if (radarAmplitude === undefined || radarAmplitude === null) return null;
     
-    const query = `
-      INSERT INTO sensor_data 
-      (sleep_data_id, timestamp, ecg, oxygen, thorax, breathing, heart_rate, has_apnea_event) 
-      VALUES ${placeholders.join(',')}
-    `;
+    const result = await pool.query(
+      `INSERT INTO breathing_data 
+       (sleep_data_id, record_time, radar_amplitude) 
+       VALUES ($1, $2, $3) 
+       RETURNING *`,
+      [sleepDataId, timestamp, radarAmplitude]
+    );
     
-    const result = await pool.query(query, values);
-    // Pastikan rowCount tidak null dengan memberikan nilai default 0
-    return result.rowCount ?? 0; // Gunakan nullish coalescing operator
+    return result.rows[0];
+  },
+
+  // Method to record apnea events
+  async createApneaEvent(
+    sleepDataId: number,
+    timestamp: Date,
+    hasApneaEvent: boolean,
+    severity?: string,
+    duration?: number
+  ): Promise<any> {
+    if (!hasApneaEvent) return null;
+    
+    const result = await pool.query(
+      `INSERT INTO apnea_events 
+       (sleep_data_id, record_time, has_apnea_event, severity, duration) 
+       VALUES ($1, $2, $3, $4, $5) 
+       RETURNING *`,
+      [sleepDataId, timestamp, hasApneaEvent, severity || null, duration || null]
+    );
+    
+    return result.rows[0];
   },
   
-  // Metode lainnya tetap sama
+  // New combined method to create all sensor data at once
+  async createAllSensorData(
+    sleepDataId: number,
+    timestamp: Date,
+    data: {
+      ecg_mv?: number | null;
+      spo2?: number | null;
+      heart_rate?: number | null;
+      raw_ir?: number | null;
+      raw_red?: number | null;
+      piezoelectric_voltage?: number | null;
+      radar_amplitude?: number | null;
+      has_apnea_event?: boolean;
+      apnea_severity?: string;
+      apnea_duration?: number;
+    }
+  ): Promise<any> {
+    // Create all sensor data in parallel
+    const promises = [];
+    
+    if (data.ecg_mv !== undefined && data.ecg_mv !== null) {
+      promises.push(this.createEcgData(sleepDataId, timestamp, data.ecg_mv));
+    }
+    
+    const pulseOxData = {
+      spo2: data.spo2,
+      heart_rate: data.heart_rate,
+      raw_ir: data.raw_ir,
+      raw_red: data.raw_red
+    };
+    
+    if (Object.values(pulseOxData).some(v => v !== undefined && v !== null)) {
+      promises.push(this.createPulseOxData(sleepDataId, timestamp, pulseOxData));
+    }
+    
+    if (data.piezoelectric_voltage !== undefined && data.piezoelectric_voltage !== null) {
+      promises.push(this.createThoracicData(sleepDataId, timestamp, data.piezoelectric_voltage));
+    }
+    
+    if (data.radar_amplitude !== undefined && data.radar_amplitude !== null) {
+      promises.push(this.createBreathingData(sleepDataId, timestamp, data.radar_amplitude));
+    }
+    
+    if (data.has_apnea_event) {
+      promises.push(this.createApneaEvent(
+        sleepDataId, 
+        timestamp, 
+        true, 
+        data.apnea_severity, 
+        data.apnea_duration
+      ));
+    }
+    
+    // Wait for all inserts to complete
+    const results = await Promise.all(promises);
+    
+    // Return a combined result
+    return {
+      timestamp,
+      data: {
+        ecg_mv: data.ecg_mv,
+        spo2: data.spo2,
+        heart_rate: data.heart_rate,
+        raw_ir: data.raw_ir, 
+        raw_red: data.raw_red,
+        piezoelectric_voltage: data.piezoelectric_voltage,
+        radar_amplitude: data.radar_amplitude,
+        has_apnea_event: data.has_apnea_event || false,
+        apnea_severity: data.apnea_severity,
+        apnea_duration: data.apnea_duration
+      }
+    };
+  },
+  
+  // Batch creation for all sensor data
+  async batchCreateAllSensorData(
+    sensorDataArray: Array<{
+      sleep_data_id: number;
+      timestamp: Date;
+      ecg_mv?: number | null;
+      spo2?: number | null;
+      heart_rate?: number | null;
+      raw_ir?: number | null;
+      raw_red?: number | null;
+      piezoelectric_voltage?: number | null;
+      radar_amplitude?: number | null;
+      has_apnea_event?: boolean;
+      apnea_severity?: string;
+      apnea_duration?: number;
+    }>
+  ): Promise<number> {
+    // If array is empty, return 0
+    if (sensorDataArray.length === 0) return 0;
+    
+    // Group records by data type
+    const ecgRecords: any[] = [];
+    const pulseOxRecords: any[] = [];
+    const thoracicRecords: any[] = [];
+    const breathingRecords: any[] = [];
+    const apneaRecords: any[] = [];
+    
+    sensorDataArray.forEach(data => {
+      if (data.ecg_mv !== undefined && data.ecg_mv !== null) {
+        ecgRecords.push({
+          sleep_data_id: data.sleep_data_id,
+          record_time: data.timestamp,
+          ecg_mv: data.ecg_mv
+        });
+      }
+      
+      const hasPulseOx = data.spo2 !== undefined || data.heart_rate !== undefined || 
+                         data.raw_ir !== undefined || data.raw_red !== undefined;
+      
+      if (hasPulseOx) {
+        pulseOxRecords.push({
+          sleep_data_id: data.sleep_data_id,
+          record_time: data.timestamp,
+          spo2: data.spo2 || null,
+          heart_rate: data.heart_rate || null,
+          raw_ir: data.raw_ir || null,
+          raw_red: data.raw_red || null
+        });
+      }
+      
+      if (data.piezoelectric_voltage !== undefined && data.piezoelectric_voltage !== null) {
+        thoracicRecords.push({
+          sleep_data_id: data.sleep_data_id,
+          record_time: data.timestamp,
+          piezoelectric_voltage: data.piezoelectric_voltage
+        });
+      }
+      
+      if (data.radar_amplitude !== undefined && data.radar_amplitude !== null) {
+        breathingRecords.push({
+          sleep_data_id: data.sleep_data_id,
+          record_time: data.timestamp,
+          radar_amplitude: data.radar_amplitude
+        });
+      }
+      
+      if (data.has_apnea_event) {
+        apneaRecords.push({
+          sleep_data_id: data.sleep_data_id,
+          record_time: data.timestamp,
+          has_apnea_event: true,
+          severity: data.apnea_severity || null,
+          duration: data.apnea_duration || null
+        });
+      }
+    });
+    
+    // Create batch insert functions for each table
+    const batchInsertEcg = async (records: any[]): Promise<number> => {
+      if (records.length === 0) return 0;
+      
+      const values: any[] = [];
+      const placeholders: string[] = [];
+      let paramIndex = 1;
+      
+      records.forEach(record => {
+        placeholders.push(`($${paramIndex++}, $${paramIndex++}, $${paramIndex++})`);
+        values.push(
+          record.sleep_data_id,
+          record.record_time,
+          record.ecg_mv
+        );
+      });
+      
+      const query = `
+        INSERT INTO ecg_data 
+        (sleep_data_id, record_time, ecg_mv) 
+        VALUES ${placeholders.join(',')}
+        ON CONFLICT (sleep_data_id, record_time) DO NOTHING
+      `;
+      
+      const result = await pool.query(query, values);
+      return result.rowCount ?? 0;
+    };
+    
+    const batchInsertPulseOx = async (records: any[]): Promise<number> => {
+      if (records.length === 0) return 0;
+      
+      const values: any[] = [];
+      const placeholders: string[] = [];
+      let paramIndex = 1;
+      
+      records.forEach(record => {
+        placeholders.push(`($${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++})`);
+        values.push(
+          record.sleep_data_id,
+          record.record_time,
+          record.spo2,
+          record.heart_rate,
+          record.raw_ir,
+          record.raw_red
+        );
+      });
+      
+      const query = `
+        INSERT INTO pulse_ox_data 
+        (sleep_data_id, record_time, spo2, heart_rate, raw_ir, raw_red) 
+        VALUES ${placeholders.join(',')}
+        ON CONFLICT (sleep_data_id, record_time) DO NOTHING
+      `;
+      
+      const result = await pool.query(query, values);
+      return result.rowCount ?? 0;
+    };
+    
+    const batchInsertThoracic = async (records: any[]): Promise<number> => {
+      if (records.length === 0) return 0;
+      
+      const values: any[] = [];
+      const placeholders: string[] = [];
+      let paramIndex = 1;
+      
+      records.forEach(record => {
+        placeholders.push(`($${paramIndex++}, $${paramIndex++}, $${paramIndex++})`);
+        values.push(
+          record.sleep_data_id,
+          record.record_time,
+          record.piezoelectric_voltage
+        );
+      });
+      
+      const query = `
+        INSERT INTO thoracic_data 
+        (sleep_data_id, record_time, piezoelectric_voltage) 
+        VALUES ${placeholders.join(',')}
+        ON CONFLICT (sleep_data_id, record_time) DO NOTHING
+      `;
+      
+      const result = await pool.query(query, values);
+      return result.rowCount ?? 0;
+    };
+    
+    const batchInsertBreathing = async (records: any[]): Promise<number> => {
+      if (records.length === 0) return 0;
+      
+      const values: any[] = [];
+      const placeholders: string[] = [];
+      let paramIndex = 1;
+      
+      records.forEach(record => {
+        placeholders.push(`($${paramIndex++}, $${paramIndex++}, $${paramIndex++})`);
+        values.push(
+          record.sleep_data_id,
+          record.record_time,
+          record.radar_amplitude
+        );
+      });
+      
+      const query = `
+        INSERT INTO breathing_data 
+        (sleep_data_id, record_time, radar_amplitude) 
+        VALUES ${placeholders.join(',')}
+        ON CONFLICT (sleep_data_id, record_time) DO NOTHING
+      `;
+      
+      const result = await pool.query(query, values);
+      return result.rowCount ?? 0;
+    };
+    
+    const batchInsertApnea = async (records: any[]): Promise<number> => {
+      if (records.length === 0) return 0;
+      
+      const values: any[] = [];
+      const placeholders: string[] = [];
+      let paramIndex = 1;
+      
+      records.forEach(record => {
+        placeholders.push(`($${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++}, $${paramIndex++})`);
+        values.push(
+          record.sleep_data_id,
+          record.record_time,
+          record.has_apnea_event,
+          record.severity,
+          record.duration
+        );
+      });
+      
+      const query = `
+        INSERT INTO apnea_events 
+        (sleep_data_id, record_time, has_apnea_event, severity, duration) 
+        VALUES ${placeholders.join(',')}
+        ON CONFLICT (sleep_data_id, record_time) DO NOTHING
+      `;
+      
+      const result = await pool.query(query, values);
+      return result.rowCount ?? 0;
+    };
+    
+    // Run all batch inserts in parallel
+    const results = await Promise.all([
+      batchInsertEcg(ecgRecords),
+      batchInsertPulseOx(pulseOxRecords),
+      batchInsertThoracic(thoracicRecords),
+      batchInsertBreathing(breathingRecords),
+      batchInsertApnea(apneaRecords)
+    ]);
+    
+    // Return total number of inserted records
+    return results.reduce((total, count) => total + count, 0);
+  },
+  
+  // Get sensor data using the database's combined view or function
   async getSensorDataByTimeRange(
     sleepDataId: number, 
     startTime: Date, 
@@ -94,30 +425,56 @@ export const sensorDataModel = {
     limit = 1000
   ): Promise<SensorData[]> {
     const result = await pool.query(
-      `SELECT * FROM sensor_data 
-       WHERE sleep_data_id = $1 AND timestamp >= $2 AND timestamp <= $3 
-       ORDER BY timestamp 
-       LIMIT $4`,
+      `SELECT * FROM get_combined_sensor_data($1, $2, $3, $4)`,
       [sleepDataId, startTime, endTime, limit]
     );
     
-    return result.rows;
+    // Transform data to match the expected SensorData interface
+    return result.rows.map(row => ({
+      id: 0, // The combined view doesn't have an ID
+      sleep_data_id: row.sleep_data_id,
+      timestamp: row.record_time,
+      ecg: row.ecg_mv,
+      oxygen: row.spo2,
+      thorax: row.piezoelectric_voltage,
+      breathing: row.radar_amplitude,
+      heart_rate: row.heart_rate,
+      has_apnea_event: row.has_apnea_event,
+      created_at: new Date() // The combined view doesn't have created_at
+    }));
   },
   
+  // Get latest sensor data with combined view
   async getLatestSensorData(sleepDataId: number, limit = 500): Promise<SensorData[]> {
+    const now = new Date();
+    // Get the data from the last 24 hours
+    const startTime = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    
     const result = await pool.query(
-      `SELECT * FROM sensor_data 
-       WHERE sleep_data_id = $1 
-       ORDER BY timestamp DESC 
-       LIMIT $2`,
-      [sleepDataId, limit]
+      `SELECT * FROM get_combined_sensor_data($1, $2, $3, $4) ORDER BY record_time DESC LIMIT $5`,
+      [sleepDataId, startTime, now, 10000, limit]
     );
     
-    return result.rows.reverse(); // Reverse untuk mendapatkan urutan kronologis
+    // Transform data to match the expected SensorData interface
+    const data = result.rows.map(row => ({
+      id: 0, // The combined view doesn't have an ID
+      sleep_data_id: row.sleep_data_id,
+      timestamp: row.record_time,
+      ecg: row.ecg_mv,
+      oxygen: row.spo2,
+      thorax: row.piezoelectric_voltage,
+      breathing: row.radar_amplitude,
+      heart_rate: row.heart_rate,
+      has_apnea_event: row.has_apnea_event,
+      created_at: new Date() // The combined view doesn't have created_at
+    }));
+    
+    return data.reverse(); // Reverse to get chronological order
   },
   
+  // Get sleep event data 
   async getSleepEventData(sleepEventId: number, margin = 30): Promise<SensorData[]> {
-    // Dapatkan sensor data di sekitar sleep event dengan beberapa margin (dalam detik)
+    // Get the sleep event details first
     const event = await pool.query('SELECT * FROM sleep_events WHERE id = $1', [sleepEventId]);
     
     if (event.rows.length === 0) {
@@ -128,21 +485,15 @@ export const sensorDataModel = {
     const sleepDataId = sleepEvent.sleep_data_id;
     const startTime = new Date(sleepEvent.start_time);
     
-    // Kurangi margin detik dari waktu mulai
+    // Calculate time range with margin
     const marginBefore = new Date(startTime);
     marginBefore.setSeconds(marginBefore.getSeconds() - margin);
     
-    // Tambahkan durasi + margin detik ke waktu mulai
+    // Add duration + margin seconds to start time
     const marginAfter = new Date(startTime);
     marginAfter.setSeconds(marginAfter.getSeconds() + sleepEvent.duration + margin);
     
-    const result = await pool.query(
-      `SELECT * FROM sensor_data 
-       WHERE sleep_data_id = $1 AND timestamp >= $2 AND timestamp <= $3 
-       ORDER BY timestamp`,
-      [sleepDataId, marginBefore, marginAfter]
-    );
-    
-    return result.rows;
+    // Use the combined view to get data
+    return this.getSensorDataByTimeRange(sleepDataId, marginBefore, marginAfter);
   }
 };

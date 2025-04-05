@@ -1,0 +1,279 @@
+-- Seed data for SleepSense PostgreSQL Database
+-- Run this script after creating the database schema
+
+-- Clear existing data (optional - comment out if you want to keep existing data)
+TRUNCATE users, patients, doctors, devices, sleep_data, sleep_analysis, sleep_events, sensor_data, notifications, audit_logs CASCADE;
+
+-- Reset sequences
+ALTER SEQUENCE users_id_seq RESTART WITH 1;
+ALTER SEQUENCE patients_id_seq RESTART WITH 1;
+ALTER SEQUENCE doctors_id_seq RESTART WITH 1;
+ALTER SEQUENCE devices_id_seq RESTART WITH 1;
+ALTER SEQUENCE sleep_data_id_seq RESTART WITH 1;
+ALTER SEQUENCE sleep_analysis_id_seq RESTART WITH 1;
+ALTER SEQUENCE sleep_events_id_seq RESTART WITH 1;
+ALTER SEQUENCE sensor_data_id_seq RESTART WITH 1;
+ALTER SEQUENCE notifications_id_seq RESTART WITH 1;
+ALTER SEQUENCE audit_logs_id_seq RESTART WITH 1;
+
+-- Create users
+-- Password is 'password123' hashed with bcrypt (using a widely compatible hash)
+INSERT INTO users (email, password, full_name, role, created_at, updated_at, last_login)
+VALUES 
+  ('doctor1@example.com', '$2a$10$JmQ5x9mO4.f9H41HQFOg/.uHbX2H4q7e0RWqSI5JLMX3G.KxWg/Im', 'Dr. Sarah Johnson', 'doctor', NOW(), NOW(), NOW()),
+  ('doctor2@example.com', '$2a$10$JmQ5x9mO4.f9H41HQFOg/.uHbX2H4q7e0RWqSI5JLMX3G.KxWg/Im', 'Dr. Michael Chen', 'doctor', NOW(), NOW(), NOW()),
+  ('patient1@example.com', '$2a$10$JmQ5x9mO4.f9H41HQFOg/.uHbX2H4q7e0RWqSI5JLMX3G.KxWg/Im', 'John Doe', 'patient', NOW(), NOW(), NOW()),
+  ('patient2@example.com', '$2a$10$JmQ5x9mO4.f9H41HQFOg/.uHbX2H4q7e0RWqSI5JLMX3G.KxWg/Im', 'Emma Smith', 'patient', NOW(), NOW(), NOW()),
+  ('patient3@example.com', '$2a$10$JmQ5x9mO4.f9H41HQFOg/.uHbX2H4q7e0RWqSI5JLMX3G.KxWg/Im', 'David Brown', 'patient', NOW(), NOW(), NOW()),
+  ('patient4@example.com', '$2a$10$JmQ5x9mO4.f9H41HQFOg/.uHbX2H4q7e0RWqSI5JLMX3G.KxWg/Im', 'Sophia Lee', 'patient', NOW(), NOW(), NOW());
+
+-- Create doctors
+INSERT INTO doctors (user_id, specialty, license_number, created_at, updated_at)
+VALUES 
+  (1, 'Sleep Medicine', 'SLP123456', NOW(), NOW()),
+  (2, 'Pulmonology', 'PUL789012', NOW(), NOW());
+
+-- Create patients
+INSERT INTO patients (user_id, gender, age, height, weight, medical_conditions, medications, doctor_id, created_at, updated_at)
+VALUES 
+  (3, 'Male', 45, 178, 86, ARRAY['Hypertension', 'Allergic Rhinitis'], ARRAY['Lisinopril 10mg'], 1, NOW(), NOW()),
+  (4, 'Female', 52, 165, 78, ARRAY['Type 2 Diabetes', 'GERD'], ARRAY['Metformin 500mg', 'Omeprazole 20mg'], 1, NOW(), NOW()),
+  (5, 'Male', 38, 182, 79, ARRAY['Asthma'], ARRAY['Albuterol'], 2, NOW(), NOW()),
+  (6, 'Female', 61, 160, 68, ARRAY['Hypertension', 'Osteoarthritis'], ARRAY['Amlodipine 5mg', 'Acetaminophen 500mg'], 2, NOW(), NOW());
+
+-- Create devices
+INSERT INTO devices (serial_number, patient_id, firmware_version, battery_level, status, created_at, updated_at)
+VALUES 
+  ('SS-2025-X1-28934', 1, '2.3.1', 85, 'active', NOW(), NOW()),
+  ('SS-2025-X1-28935', 2, '2.3.1', 72, 'active', NOW(), NOW()),
+  ('SS-2025-X1-28936', 3, '2.3.1', 93, 'active', NOW(), NOW()),
+  ('SS-2025-X1-28937', 4, '2.3.1', 68, 'active', NOW(), NOW()),
+  ('SS-2025-X1-28938', NULL, '2.3.1', 100, 'inactive', NOW(), NOW());
+
+-- Function to get random float
+CREATE OR REPLACE FUNCTION random_float(min_val FLOAT, max_val FLOAT) RETURNS FLOAT AS $$
+BEGIN
+  RETURN min_val + (max_val - min_val) * random();
+END;
+$$ LANGUAGE plpgsql;
+
+-- Add some sample notifications
+INSERT INTO notifications (user_id, type, title, message, is_read, created_at)
+VALUES
+  (3, 'analysis', 'Analysis Complete', 'Your sleep analysis for last night is ready to view.', false, NOW() - INTERVAL '1 day'),
+  (3, 'device', 'Low Battery', 'Your SleepSense device battery is low. Please charge it.', true, NOW() - INTERVAL '3 day'),
+  (4, 'analysis', 'Doctor Feedback', 'Dr. Sarah Johnson has provided feedback on your sleep data.', false, NOW() - INTERVAL '2 day'),
+  (5, 'system', 'Welcome to SleepSense', 'Thank you for joining SleepSense. Set up your device to start monitoring.', true, NOW() - INTERVAL '10 day');
+
+-- Generate sleep data and related records
+DO $$
+DECLARE
+  p_id INTEGER;
+  d_id INTEGER;
+  sd_id INTEGER;
+  curr_date DATE;
+  sleep_start TIMESTAMP;
+  sleep_end TIMESTAMP;
+  sleep_duration FLOAT;
+  sleep_quality INTEGER;
+  apnea_events INTEGER;
+  hypopnea_events INTEGER;
+  ahi FLOAT;
+  severity severity_level;
+  status analysis_status;
+  doctor_id INTEGER;
+  doctor_notes TEXT;
+  reviewed_at TIMESTAMP;
+  lowest_oxygen INTEGER;
+  avg_oxygen FLOAT;
+  time_below90 INTEGER;
+  event_start TIMESTAMP;
+  event_duration INTEGER;
+  oxygen_drop FLOAT;
+  event_severity severity_level;
+  confidence FLOAT;
+  latest_sd_id INTEGER;
+  latest_start TIMESTAMP;
+  latest_end TIMESTAMP;
+BEGIN
+  -- For each patient
+  FOR p_id IN 1..4 LOOP
+    -- Get device ID
+    SELECT id INTO d_id FROM devices WHERE patient_id = p_id LIMIT 1;
+    
+    -- Generate 15 days of sleep data (extended from 7 to provide more history)
+    FOR day_offset IN 0..14 LOOP
+      -- Set date and times
+      curr_date := CURRENT_DATE - day_offset;
+      sleep_start := curr_date + '22:30:00'::time;
+      sleep_end := curr_date + 1 + '06:45:00'::time;
+      sleep_duration := 8.25 - random_float(0, 0.5); -- 7.75 to 8.25 hours
+      sleep_quality := 65 + floor(random() * 30)::INTEGER; -- 65 to 95
+      
+      -- Insert sleep data
+      INSERT INTO sleep_data (patient_id, device_id, date, start_time, end_time, sleep_duration, sleep_quality, created_at, updated_at)
+      VALUES (p_id, d_id, curr_date, sleep_start, sleep_end, sleep_duration, sleep_quality, NOW(), NOW())
+      RETURNING id INTO sd_id;
+      
+      -- Determine AHI and events based on patient
+      CASE p_id
+        WHEN 1 THEN -- John Doe - Moderate OSA
+          apnea_events := 12 + floor(random() * 10)::INTEGER;
+          hypopnea_events := 8 + floor(random() * 6)::INTEGER;
+          severity := 'moderate';
+        WHEN 2 THEN -- Emma Smith - Severe OSA
+          apnea_events := 25 + floor(random() * 15)::INTEGER;
+          hypopnea_events := 15 + floor(random() * 10)::INTEGER;
+          severity := 'severe';
+        WHEN 3 THEN -- David Brown - Mild OSA
+          apnea_events := 4 + floor(random() * 4)::INTEGER;
+          hypopnea_events := 3 + floor(random() * 3)::INTEGER;
+          severity := 'mild';
+        ELSE -- Sophia Lee - Moderate to Severe OSA
+          apnea_events := 18 + floor(random() * 12)::INTEGER;
+          hypopnea_events := 10 + floor(random() * 8)::INTEGER;
+          ahi := (apnea_events + hypopnea_events) / sleep_duration;
+          severity := CASE WHEN ahi >= 30 THEN 'severe' ELSE 'moderate' END;
+      END CASE;
+      
+      -- Calculate AHI
+      ahi := (apnea_events + hypopnea_events) / sleep_duration;
+      
+      -- Set status - most recent is pending, older ones are approved with varying probabilities
+      IF day_offset = 0 THEN
+        status := 'pending';
+        doctor_id := NULL;
+        doctor_notes := NULL;
+        reviewed_at := NULL;
+      ELSE
+        -- Mix of approved and rejected for more realistic data
+        IF random() > 0.2 THEN
+          status := 'approved';
+          doctor_notes := CASE
+            WHEN p_id = 1 THEN 'Patient shows moderate sleep apnea patterns. Continue CPAP therapy at current settings.'
+            WHEN p_id = 2 THEN 'Severe sleep apnea persists. Increasing CPAP pressure to 12 cm H2O recommended.'
+            WHEN p_id = 3 THEN 'Mild sleep apnea with good response to positional therapy. Continue current treatment.'
+            ELSE 'Evidence of moderate sleep apnea. Schedule in-person evaluation to assess treatment options.'
+          END;
+        ELSE
+          status := 'rejected';
+          doctor_notes := 'Data quality issues detected. Please ensure the device is worn properly throughout the night.';
+        END IF;
+        
+        -- Assign the appropriate doctor
+        SELECT user_id INTO doctor_id FROM patients WHERE id = p_id;
+        reviewed_at := CURRENT_DATE - day_offset + 1; -- reviewed the next day
+      END IF;
+      
+      -- Create sleep analysis
+      lowest_oxygen := CASE 
+        WHEN severity = 'severe' THEN 80 + floor(random() * 5)::INTEGER
+        WHEN severity = 'moderate' THEN 85 + floor(random() * 5)::INTEGER
+        ELSE 88 + floor(random() * 4)::INTEGER
+      END;
+      
+      avg_oxygen := 92 + random_float(0, 4);
+      time_below90 := floor(apnea_events * 1.5)::INTEGER;
+      
+      INSERT INTO sleep_analysis 
+      (sleep_data_id, ahi, apnea_events, hypopnea_events, lowest_oxygen, avg_oxygen, time_below90, severity, status, doctor_id, doctor_notes, reviewed_at, created_at, updated_at)
+      VALUES (sd_id, ahi, apnea_events, hypopnea_events, lowest_oxygen, avg_oxygen, time_below90, severity, status, doctor_id, doctor_notes, reviewed_at, NOW(), NOW());
+      
+      -- Create apnea events
+      FOR e IN 1..apnea_events LOOP
+        event_start := sleep_start + (random() * sleep_duration * 60 * interval '1 minute');
+        event_duration := 10 + floor(random() * 20)::INTEGER; -- 10-30 seconds
+        oxygen_drop := 2 + random_float(0, 6); -- 2-8% drop
+        event_severity := CASE
+          WHEN oxygen_drop > 5 THEN 'moderate'
+          WHEN oxygen_drop > 3 THEN 'mild'
+          ELSE 'mild'
+        END;
+        confidence := 0.75 + random_float(0, 0.2); -- 0.75-0.95
+        
+        INSERT INTO sleep_events 
+        (sleep_data_id, type, start_time, duration, oxygen_drop, severity, confidence, created_at)
+        VALUES (sd_id, 'apnea', event_start, event_duration, oxygen_drop, event_severity, confidence, NOW());
+      END LOOP;
+      
+      -- Create hypopnea events
+      FOR e IN 1..hypopnea_events LOOP
+        event_start := sleep_start + (random() * sleep_duration * 60 * interval '1 minute');
+        event_duration := 8 + floor(random() * 12)::INTEGER; -- 8-20 seconds
+        oxygen_drop := 1 + random_float(0, 3); -- 1-4% drop
+        event_severity := CASE WHEN oxygen_drop > 3 THEN 'moderate' ELSE 'mild' END;
+        confidence := 0.8 + random_float(0, 0.15); -- 0.8-0.95
+        
+        INSERT INTO sleep_events 
+        (sleep_data_id, type, start_time, duration, oxygen_drop, severity, confidence, created_at)
+        VALUES (sd_id, 'hypopnea', event_start, event_duration, oxygen_drop, event_severity, confidence, NOW());
+      END LOOP;
+    END LOOP;
+  END LOOP;
+  
+  -- Generate sensor data for most recent sleep session
+  SELECT 
+    sd.id, 
+    sd.start_time, 
+    sd.end_time 
+  INTO 
+    latest_sd_id, 
+    latest_start, 
+    latest_end
+  FROM sleep_data sd
+  ORDER BY sd.date DESC, sd.id DESC
+  LIMIT 1;
+  
+  -- Create data points every 5 seconds for 10 minutes (120 points)
+  FOR i IN 0..119 LOOP
+    DECLARE
+      curr_timestamp TIMESTAMP;
+      ecg_val FLOAT;
+      oxygen_val FLOAT;
+      thorax_val FLOAT;
+      breathing_val FLOAT;
+      heart_rate_val INTEGER;
+      has_apnea_event_val BOOLEAN;
+    BEGIN
+      curr_timestamp := latest_start + (i * 5 * interval '1 second');
+      
+      -- Create realistic data
+      ecg_val := sin(i * 0.8) * 0.6 + sin(i * 2.5) * 0.3 + (random_float(-0.5, 0.5) * 0.15);
+      oxygen_val := 97 + sin(i * 0.1) * 0.7 + random_float(-0.5, 0.5) * 0.4;
+      thorax_val := sin(i * 0.3) * 0.8 + random_float(-0.5, 0.5) * 0.2;
+      breathing_val := thorax_val * 1.1 + random_float(-0.5, 0.5) * 0.15;
+      heart_rate_val := 65 + round(sin(i * 0.1) * 5 + random_float(-0.5, 0.5) * 3)::INTEGER;
+      
+      -- Every 20 data points, simulate an apnea event
+      has_apnea_event_val := (i BETWEEN 40 AND 50) OR (i BETWEEN 90 AND 100);
+      
+      INSERT INTO sensor_data 
+      (sleep_data_id, timestamp, ecg, oxygen, thorax, breathing, heart_rate, has_apnea_event, created_at)
+      VALUES (
+        latest_sd_id,
+        curr_timestamp,
+        ecg_val,
+        CASE WHEN has_apnea_event_val THEN (oxygen_val - 5 * sin((i % 10) * 0.5)) ELSE oxygen_val END,
+        thorax_val,
+        CASE WHEN has_apnea_event_val THEN (thorax_val * 0.2) ELSE breathing_val END,
+        heart_rate_val,
+        has_apnea_event_val,
+        NOW()
+      );
+    END;
+  END LOOP;
+  
+  -- Add some sample audit logs
+  INSERT INTO audit_logs (user_id, action, table_name, record_id, old_data, new_data, ip_address, created_at)
+  VALUES 
+    (1, 'UPDATE', 'sleep_analysis', 3, '{"status": "pending"}', '{"status": "approved", "doctor_notes": "Patient shows improvement."}', '192.168.1.100', NOW() - INTERVAL '5 days'),
+    (1, 'UPDATE', 'patients', 2, '{"medications": ["Metformin 500mg"]}', '{"medications": ["Metformin 500mg", "Omeprazole 20mg"]}', '192.168.1.100', NOW() - INTERVAL '7 days'),
+    (2, 'UPDATE', 'sleep_analysis', 5, '{"status": "pending"}', '{"status": "rejected", "doctor_notes": "Data quality issues."}', '192.168.1.101', NOW() - INTERVAL '3 days');
+END $$;
+
+-- Clean up temporary function
+DROP FUNCTION IF EXISTS random_float(float, float);
+
+-- Output test user credentials
+SELECT 'Test Users:' AS message;
+SELECT 'Username: ' || email || ' | Password: password123 | Role: ' || role AS user_info FROM users ORDER BY role, id;

@@ -1,0 +1,322 @@
+-- ===================================================================
+-- SCRIPT MIGRASI DATABASE SLEEPSENSE: SINGLE TABLE KE MULTI-TABLE
+-- ===================================================================
+
+-- -------------------------
+-- BAGIAN 1: PERSIAPAN AWAL
+-- -------------------------
+
+-- Backup tabel sensor_data yang ada
+CREATE TABLE IF NOT EXISTS sensor_data_backup AS 
+SELECT * FROM sensor_data;
+
+-- Tambahkan kolom yang mungkin belum ada di tabel sensor_data
+ALTER TABLE sensor_data 
+ADD COLUMN IF NOT EXISTS raw_ir INTEGER,
+ADD COLUMN IF NOT EXISTS raw_red INTEGER;
+
+-- --------------------------------
+-- BAGIAN 2: MEMBUAT TABEL BARU
+-- --------------------------------
+
+-- Tabel untuk data ECG
+CREATE TABLE IF NOT EXISTS ecg_data (
+  id SERIAL PRIMARY KEY,
+  sleep_data_id INTEGER REFERENCES sleep_data(id) ON DELETE CASCADE,
+  record_time TIMESTAMP NOT NULL, -- Hindari menggunakan nama 'timestamp'
+  ecg_mv DECIMAL, -- Dari kolom ecg di tabel sensor_data
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  UNIQUE(sleep_data_id, record_time)
+);
+
+-- Tabel untuk data pulse oximeter
+CREATE TABLE IF NOT EXISTS pulse_ox_data (
+  id SERIAL PRIMARY KEY,
+  sleep_data_id INTEGER REFERENCES sleep_data(id) ON DELETE CASCADE,
+  record_time TIMESTAMP NOT NULL, -- Hindari menggunakan nama 'timestamp'
+  spo2 DECIMAL, -- Dari kolom oxygen di tabel sensor_data
+  heart_rate INTEGER, -- Dari kolom heart_rate di tabel sensor_data
+  raw_ir INTEGER, -- Dari kolom raw_ir di tabel sensor_data
+  raw_red INTEGER, -- Dari kolom raw_red di tabel sensor_data
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  UNIQUE(sleep_data_id, record_time)
+);
+
+-- Tabel untuk data gerakan thorax
+CREATE TABLE IF NOT EXISTS thoracic_data (
+  id SERIAL PRIMARY KEY,
+  sleep_data_id INTEGER REFERENCES sleep_data(id) ON DELETE CASCADE,
+  record_time TIMESTAMP NOT NULL, -- Hindari menggunakan nama 'timestamp'
+  piezoelectric_voltage DECIMAL, -- Dari kolom thorax di tabel sensor_data
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  UNIQUE(sleep_data_id, record_time)
+);
+
+-- Tabel untuk data pola pernapasan
+CREATE TABLE IF NOT EXISTS breathing_data (
+  id SERIAL PRIMARY KEY,
+  sleep_data_id INTEGER REFERENCES sleep_data(id) ON DELETE CASCADE,
+  record_time TIMESTAMP NOT NULL, -- Hindari menggunakan nama 'timestamp'
+  radar_amplitude DECIMAL, -- Dari kolom breathing di tabel sensor_data
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  UNIQUE(sleep_data_id, record_time)
+);
+
+-- Tabel untuk kejadian apnea
+CREATE TABLE IF NOT EXISTS apnea_events (
+  id SERIAL PRIMARY KEY,
+  sleep_data_id INTEGER REFERENCES sleep_data(id) ON DELETE CASCADE,
+  record_time TIMESTAMP NOT NULL, -- Hindari menggunakan nama 'timestamp'
+  has_apnea_event BOOLEAN DEFAULT TRUE, -- Dari kolom has_apnea_event di tabel sensor_data
+  severity severity_level, -- Gunakan severity_level yang sudah ada jika tersedia
+  duration INTEGER, -- Durasi dalam detik
+  created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+  UNIQUE(sleep_data_id, record_time)
+);
+
+-- --------------------------------
+-- BAGIAN 3: MEMBUAT INDEKS
+-- --------------------------------
+
+CREATE INDEX IF NOT EXISTS idx_ecg_data_record_time ON ecg_data(record_time);
+CREATE INDEX IF NOT EXISTS idx_ecg_data_sleep_data_id ON ecg_data(sleep_data_id);
+
+CREATE INDEX IF NOT EXISTS idx_pulse_ox_data_record_time ON pulse_ox_data(record_time);
+CREATE INDEX IF NOT EXISTS idx_pulse_ox_data_sleep_data_id ON pulse_ox_data(sleep_data_id);
+CREATE INDEX IF NOT EXISTS idx_pulse_ox_data_spo2 ON pulse_ox_data(spo2);
+CREATE INDEX IF NOT EXISTS idx_pulse_ox_data_heart_rate ON pulse_ox_data(heart_rate);
+
+CREATE INDEX IF NOT EXISTS idx_thoracic_data_record_time ON thoracic_data(record_time);
+CREATE INDEX IF NOT EXISTS idx_thoracic_data_sleep_data_id ON thoracic_data(sleep_data_id);
+
+CREATE INDEX IF NOT EXISTS idx_breathing_data_record_time ON breathing_data(record_time);
+CREATE INDEX IF NOT EXISTS idx_breathing_data_sleep_data_id ON breathing_data(sleep_data_id);
+
+CREATE INDEX IF NOT EXISTS idx_apnea_events_record_time ON apnea_events(record_time);
+CREATE INDEX IF NOT EXISTS idx_apnea_events_sleep_data_id ON apnea_events(sleep_data_id);
+CREATE INDEX IF NOT EXISTS idx_apnea_events_has_apnea_event ON apnea_events(has_apnea_event);
+
+-- --------------------------------
+-- BAGIAN 4: MIGRASI DATA
+-- --------------------------------
+
+-- 4.1 Migrasi data ECG
+INSERT INTO ecg_data (sleep_data_id, record_time, ecg_mv, created_at)
+SELECT 
+  sleep_data_id, 
+  timestamp AS record_time, 
+  ecg AS ecg_mv, -- Menggunakan kolom ecg dari sensor_data
+  created_at 
+FROM sensor_data 
+WHERE ecg IS NOT NULL
+ON CONFLICT (sleep_data_id, record_time) DO NOTHING;
+
+-- 4.2 Migrasi data pulse oximeter
+INSERT INTO pulse_ox_data (sleep_data_id, record_time, spo2, heart_rate, raw_ir, raw_red, created_at)
+SELECT 
+  sleep_data_id, 
+  timestamp AS record_time, 
+  oxygen AS spo2, -- Menggunakan kolom oxygen dari sensor_data untuk spo2
+  heart_rate, 
+  raw_ir, 
+  raw_red, 
+  created_at 
+FROM sensor_data 
+WHERE oxygen IS NOT NULL OR heart_rate IS NOT NULL OR raw_ir IS NOT NULL OR raw_red IS NOT NULL
+ON CONFLICT (sleep_data_id, record_time) DO NOTHING;
+
+-- 4.3 Migrasi data gerakan thorax
+INSERT INTO thoracic_data (sleep_data_id, record_time, piezoelectric_voltage, created_at)
+SELECT 
+  sleep_data_id, 
+  timestamp AS record_time, 
+  thorax AS piezoelectric_voltage, -- Menggunakan kolom thorax dari sensor_data
+  created_at 
+FROM sensor_data 
+WHERE thorax IS NOT NULL
+ON CONFLICT (sleep_data_id, record_time) DO NOTHING;
+
+-- 4.4 Migrasi data pola pernapasan
+INSERT INTO breathing_data (sleep_data_id, record_time, radar_amplitude, created_at)
+SELECT 
+  sleep_data_id, 
+  timestamp AS record_time, 
+  breathing AS radar_amplitude, -- Menggunakan kolom breathing dari sensor_data
+  created_at 
+FROM sensor_data 
+WHERE breathing IS NOT NULL
+ON CONFLICT (sleep_data_id, record_time) DO NOTHING;
+
+-- 4.5 Migrasi data kejadian apnea
+INSERT INTO apnea_events (sleep_data_id, record_time, has_apnea_event, created_at)
+SELECT 
+  sleep_data_id, 
+  timestamp AS record_time, 
+  has_apnea_event, 
+  created_at 
+FROM sensor_data 
+WHERE has_apnea_event = true
+ON CONFLICT (sleep_data_id, record_time) DO NOTHING;
+
+-- ----------------------------------------
+-- BAGIAN 5: MEMBUAT VIEW UNTUK DATA GABUNGAN
+-- ----------------------------------------
+
+-- Buat view yang efisien dengan UNION ALL dan alias yang jelas
+CREATE OR REPLACE VIEW combined_sensor_data AS
+SELECT 
+  sleep_data_id,
+  record_time,
+  MAX(ecg_mv) AS ecg_mv,
+  MAX(spo2) AS spo2,
+  MAX(heart_rate) AS heart_rate,
+  MAX(raw_ir) AS raw_ir,
+  MAX(raw_red) AS raw_red,
+  MAX(piezoelectric_voltage) AS piezoelectric_voltage,
+  MAX(radar_amplitude) AS radar_amplitude,
+  BOOL_OR(has_apnea_event) AS has_apnea_event,
+  MAX(apnea_severity) AS apnea_severity,
+  MAX(apnea_duration) AS apnea_duration
+FROM (
+  SELECT 
+    sleep_data_id, 
+    record_time, 
+    ecg_mv, 
+    NULL::DECIMAL as spo2, 
+    NULL::INTEGER as heart_rate, 
+    NULL::INTEGER as raw_ir, 
+    NULL::INTEGER as raw_red, 
+    NULL::DECIMAL as piezoelectric_voltage, 
+    NULL::DECIMAL as radar_amplitude, 
+    FALSE as has_apnea_event, 
+    NULL::severity_level as apnea_severity, 
+    NULL::INTEGER as apnea_duration
+  FROM ecg_data
+  
+  UNION ALL
+  
+  SELECT 
+    sleep_data_id, 
+    record_time, 
+    NULL::DECIMAL as ecg_mv, 
+    spo2, 
+    heart_rate, 
+    raw_ir, 
+    raw_red, 
+    NULL::DECIMAL as piezoelectric_voltage, 
+    NULL::DECIMAL as radar_amplitude, 
+    FALSE as has_apnea_event, 
+    NULL::severity_level as apnea_severity, 
+    NULL::INTEGER as apnea_duration
+  FROM pulse_ox_data
+  
+  UNION ALL
+  
+  SELECT 
+    sleep_data_id, 
+    record_time, 
+    NULL::DECIMAL as ecg_mv, 
+    NULL::DECIMAL as spo2, 
+    NULL::INTEGER as heart_rate, 
+    NULL::INTEGER as raw_ir, 
+    NULL::INTEGER as raw_red, 
+    piezoelectric_voltage, 
+    NULL::DECIMAL as radar_amplitude, 
+    FALSE as has_apnea_event, 
+    NULL::severity_level as apnea_severity, 
+    NULL::INTEGER as apnea_duration
+  FROM thoracic_data
+  
+  UNION ALL
+  
+  SELECT 
+    sleep_data_id, 
+    record_time, 
+    NULL::DECIMAL as ecg_mv, 
+    NULL::DECIMAL as spo2, 
+    NULL::INTEGER as heart_rate, 
+    NULL::INTEGER as raw_ir, 
+    NULL::INTEGER as raw_red, 
+    NULL::DECIMAL as piezoelectric_voltage, 
+    radar_amplitude, 
+    FALSE as has_apnea_event, 
+    NULL::severity_level as apnea_severity, 
+    NULL::INTEGER as apnea_duration
+  FROM breathing_data
+  
+  UNION ALL
+  
+  SELECT 
+    sleep_data_id, 
+    record_time, 
+    NULL::DECIMAL as ecg_mv, 
+    NULL::DECIMAL as spo2, 
+    NULL::INTEGER as heart_rate, 
+    NULL::INTEGER as raw_ir, 
+    NULL::INTEGER as raw_red, 
+    NULL::DECIMAL as piezoelectric_voltage, 
+    NULL::DECIMAL as radar_amplitude, 
+    has_apnea_event, 
+    severity as apnea_severity, 
+    duration as apnea_duration
+  FROM apnea_events
+) as combined_data
+GROUP BY sleep_data_id, record_time;
+
+-- -----------------------------------------------------
+-- BAGIAN 6: MEMBUAT FUNGSI UNTUK AKSES DATA GABUNGAN
+-- -----------------------------------------------------
+
+-- Fungsi untuk mendapatkan data sensor gabungan dengan parameter
+CREATE OR REPLACE FUNCTION get_combined_sensor_data(
+  p_sleep_data_id INTEGER, 
+  p_start_time TIMESTAMP, 
+  p_end_time TIMESTAMP, 
+  p_limit INTEGER DEFAULT 1000
+) RETURNS TABLE (
+  sleep_data_id INTEGER,
+  record_time TIMESTAMP,
+  ecg_mv DECIMAL,
+  spo2 DECIMAL,
+  heart_rate INTEGER,
+  raw_ir INTEGER,
+  raw_red INTEGER,
+  piezoelectric_voltage DECIMAL,
+  radar_amplitude DECIMAL,
+  has_apnea_event BOOLEAN,
+  apnea_severity severity_level,
+  apnea_duration INTEGER
+) AS $$
+BEGIN
+  RETURN QUERY
+  SELECT 
+    c.sleep_data_id,
+    c.record_time,
+    c.ecg_mv,
+    c.spo2,
+    c.heart_rate,
+    c.raw_ir,
+    c.raw_red,
+    c.piezoelectric_voltage,
+    c.radar_amplitude,
+    c.has_apnea_event,
+    c.apnea_severity,
+    c.apnea_duration
+  FROM combined_sensor_data c
+  WHERE 
+    c.sleep_data_id = p_sleep_data_id AND
+    c.record_time BETWEEN p_start_time AND p_end_time
+  ORDER BY c.record_time
+  LIMIT p_limit;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ---------------------------------------------------------------
+-- BAGIAN 7: CLEANUP & FINALISASI (Opsional - lakukan setelah semuanya bekerja dengan baik)
+-- ---------------------------------------------------------------
+
+-- Anda dapat menonaktifkan tabel sensor_data lama jika migrasi sukses
+-- ALTER TABLE sensor_data RENAME TO old_sensor_data;
+
+-- Atau untuk keamanan, cukup tambahkan komentar yang menunjukkan bahwa tabel ini sudah tidak digunakan
+-- COMMENT ON TABLE sensor_data IS 'DEPRECATED - Data telah dimigrasi ke tabel-tabel terpisah. Jangan gunakan untuk insert data baru.';
