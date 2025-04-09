@@ -26,7 +26,7 @@ const handleMqttMessage = async (topic: string, message: Buffer) => {
   try {
     console.log(`Received MQTT message on topic: ${topic}`);
     
-    // Parsing topik MQTT (format: sleepsense/device/{deviceSerialNumber}/data)
+    // Parsing topik MQTT (format: sleepsense/device/{deviceSerialNumber}/{dataType})
     const topicParts = topic.split('/');
     if (topicParts.length < 4 || topicParts[0] !== 'sleepsense' || topicParts[1] !== 'device') {
       console.warn(`Invalid topic format: ${topic}`);
@@ -34,7 +34,7 @@ const handleMqttMessage = async (topic: string, message: Buffer) => {
     }
     
     const deviceSerialNumber = topicParts[2];
-    const dataType = topicParts[3]; // 'data', 'batch', 'status', etc.
+    const dataType = topicParts[3]; // 'finger', 'belt', 'status', etc.
     
     // Cari device dari database
     const device = await deviceModel.findBySerialNumber(deviceSerialNumber);
@@ -53,19 +53,25 @@ const handleMqttMessage = async (topic: string, message: Buffer) => {
     const payload = JSON.parse(message.toString());
     
     // Process data berdasarkan jenisnya
-    if (dataType === 'data') {
-      // Proses data sensor tunggal
-      await processSensorData(device.id, device.patient_id, payload);
-    } else if (dataType === 'batch') {
-      // Proses batch data sensor
-      await processBatchSensorData(device.id, device.patient_id, payload);
+    if (dataType === 'finger') {
+      // Proses data sensor jari (pulse oximeter)
+      await processFingerSensorData(device.id, device.patient_id, payload);
+    } else if (dataType === 'belt') {
+      // Proses data sensor belt (ECG, thoracic, breathing)
+      await processBeltSensorData(device.id, device.patient_id, payload);
     } else if (dataType === 'status') {
       // Update status device
       await deviceModel.update(device.id, {
         last_sync: new Date(),
-        battery_level: payload.batteryLevel,
+        battery_level: payload.battery_level,
         status: payload.status || 'active'
       });
+    } else if (dataType === 'data') {
+      // Legacy format - process single data point
+      await processSensorData(device.id, device.patient_id, payload);
+    } else if (dataType === 'batch') {
+      // Legacy format - process batch data
+      await processBatchSensorData(device.id, device.patient_id, payload);
     }
     
     // Kirim data ke semua koneksi WebSocket pasien
@@ -80,7 +86,120 @@ const handleMqttMessage = async (topic: string, message: Buffer) => {
   }
 };
 
-// Proses data sensor dari perangkat IoT
+// Proses data sensor jari (pulse oximeter)
+const processFingerSensorData = async (deviceId: number, patientId: number, payload: any) => {
+  try {
+    // Verifikasi format data
+    if (!Array.isArray(payload.data)) {
+      throw new Error('Invalid finger sensor data format');
+    }
+    
+    // Cari atau buat data tidur untuk hari ini
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    let sleepData = await sleepDataModel.findByPatientIdAndDate(patientId, today);
+    
+    if (!sleepData) {
+      sleepData = await sleepDataModel.create(
+        patientId,
+        today,
+        new Date(), // Start time is now
+        deviceId
+      );
+    }
+    
+    // Prepare data untuk batch insertion
+    const pulseOxBatch = payload.data.map((item: any) => ({
+      sleep_data_id: sleepData.id,
+      timestamp: new Date(item.timestamp),
+      spo2: item.spo2,
+      heart_rate: item.bpm, // Map bpm to heart_rate
+      raw_ir: null,
+      raw_red: null
+    }));
+    
+    // Insert data ke tabel pulse_ox_data
+    await sensorDataModel.batchCreatePulseOxData(pulseOxBatch);
+    
+  } catch (error) {
+    console.error('Error processing finger sensor data:', error);
+    throw error;
+  }
+};
+
+// Proses data sensor belt (ECG, thoracic, breathing)
+const processBeltSensorData = async (deviceId: number, patientId: number, payload: any) => {
+  try {
+    // Verifikasi format data
+    if (!Array.isArray(payload.data)) {
+      throw new Error('Invalid belt sensor data format');
+    }
+    
+    // Cari atau buat data tidur untuk hari ini
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    let sleepData = await sleepDataModel.findByPatientIdAndDate(patientId, today);
+    
+    if (!sleepData) {
+      sleepData = await sleepDataModel.create(
+        patientId,
+        today,
+        new Date(), // Start time is now
+        deviceId
+      );
+    }
+    
+    // Prepare data untuk batch insertion (for each sensor type)
+    const ecgBatch: any[] = [];
+    const thoracicBatch: any[] = [];
+    const breathingBatch: any[] = [];
+    
+    for (const item of payload.data) {
+      const timestamp = new Date(item.timestamp);
+      
+      // Add to ECG batch if ecg data exists
+      if (item.ecg !== undefined && item.ecg !== null) {
+        ecgBatch.push({
+          sleep_data_id: sleepData.id,
+          timestamp,
+          ecg_mv: item.ecg
+        });
+      }
+      
+      // Add to thoracic batch if piezoelectric_voltage data exists
+      if (item.piezoelectric_voltage !== undefined && item.piezoelectric_voltage !== null) {
+        thoracicBatch.push({
+          sleep_data_id: sleepData.id,
+          timestamp,
+          piezoelectric_voltage: item.piezoelectric_voltage
+        });
+      }
+      
+      // Add to breathing batch if radar_amplitude or rcwl_amplitude data exists
+      const radarAmplitude = item.radar_amplitude || item.rcwl_amplitude;
+      if (radarAmplitude !== undefined && radarAmplitude !== null) {
+        breathingBatch.push({
+          sleep_data_id: sleepData.id,
+          timestamp,
+          radar_amplitude: radarAmplitude
+        });
+      }
+    }
+    
+    // Insert data ke masing-masing tabel
+    await sensorDataModel.batchCreateEcgData(ecgBatch);
+    await sensorDataModel.batchCreateThoracicData(thoracicBatch);
+    await sensorDataModel.batchCreateBreathingData(breathingBatch);
+    
+  } catch (error) {
+    console.error('Error processing belt sensor data:', error);
+    throw error;
+  }
+};
+
+// Proses data sensor dari perangkat IoT (format lama - untuk kompatibilitas)
 const processSensorData = async (deviceId: number, patientId: number, data: any) => {
   try {
     // Cari atau buat data tidur untuk hari ini
@@ -109,7 +228,7 @@ const processSensorData = async (deviceId: number, patientId: number, data: any)
         raw_ir: data.raw_ir,
         raw_red: data.raw_red,
         piezoelectric_voltage: data.piezoelectric_voltage || data.thorax,
-        radar_amplitude: data.radar_amplitude || data.breathing,
+        radar_amplitude: data.radar_amplitude || data.breathing || data.rcwl_amplitude,
         has_apnea_event: data.has_apnea_event || data.hasApneaEvent || false,
         apnea_severity: data.apnea_severity || data.severity,
         apnea_duration: data.apnea_duration || data.duration
@@ -122,7 +241,7 @@ const processSensorData = async (deviceId: number, patientId: number, data: any)
   }
 };
 
-// Proses batch data sensor
+// Proses batch data sensor (format lama - untuk kompatibilitas)
 const processBatchSensorData = async (deviceId: number, patientId: number, batchData: any) => {
   try {
     // Periksa format data batch
@@ -155,7 +274,7 @@ const processBatchSensorData = async (deviceId: number, patientId: number, batch
       raw_ir: item.raw_ir,
       raw_red: item.raw_red,
       piezoelectric_voltage: item.piezoelectric_voltage || item.thorax,
-      radar_amplitude: item.radar_amplitude || item.breathing,
+      radar_amplitude: item.radar_amplitude || item.breathing || item.rcwl_amplitude,
       has_apnea_event: item.has_apnea_event || item.hasApneaEvent || false,
       apnea_severity: item.apnea_severity || item.severity,
       apnea_duration: item.apnea_duration || item.duration
@@ -265,7 +384,7 @@ export function initializeRealTimeServices(server: HTTPServer) {
   mqttClient.on('connect', () => {
     console.log('Connected to MQTT broker');
     
-    // Subscribe ke topik untuk semua perangkat
+    // Subscribe ke topik untuk semua perangkat dan semua jenis data
     mqttClient.subscribe('sleepsense/device/+/+', (err) => {
       if (err) {
         console.error('Error subscribing to MQTT topics:', err);
@@ -287,5 +406,3 @@ export function initializeRealTimeServices(server: HTTPServer) {
   
   console.log('Real-time services initialized');
 }
-
-
