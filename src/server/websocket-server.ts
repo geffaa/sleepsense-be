@@ -4,19 +4,11 @@ import mqtt from 'mqtt';
 import { deviceModel } from '../models/device.model';
 import { sleepDataModel } from '../models/sleepData.model';
 import { sensorDataModel } from '../models/sensorData.model';
+import { mqttConfig as globalMqttConfig } from '../config/mqtt-config';
 
 // Map untuk menyimpan koneksi WebSocket untuk setiap pasien
 // Key: patientId, Value: Array koneksi WebSocket
 const patientConnections: Map<number, WebSocket[]> = new Map();
-
-// Konfigurasi MQTT
-const mqttConfig = {
-  host: process.env.MQTT_HOST || 'localhost',
-  port: parseInt(process.env.MQTT_PORT || '1883', 10),
-  username: process.env.MQTT_USERNAME,
-  password: process.env.MQTT_PASSWORD,
-  clientId: `sleepsense_server_${Math.random().toString(16).substring(2, 10)}` // Client ID unik
-};
 
 // Inisialisasi koneksi MQTT
 let mqttClient: mqtt.MqttClient;
@@ -372,17 +364,17 @@ export function initializeRealTimeServices(server: HTTPServer) {
     }
   });
   
-  // Inisialisasi koneksi MQTT
-  mqttClient = mqtt.connect({
-    host: mqttConfig.host,
-    port: mqttConfig.port,
-    username: mqttConfig.username,
-    password: mqttConfig.password,
-    clientId: mqttConfig.clientId
+   // Inisialisasi koneksi MQTT menggunakan konfigurasi dari mqtt-config.ts
+   mqttClient = mqtt.connect({
+    host: globalMqttConfig.host,
+    port: globalMqttConfig.port,
+    username: globalMqttConfig.username || undefined,
+    password: globalMqttConfig.password || undefined,
+    clientId: globalMqttConfig.clientId
   });
   
   mqttClient.on('connect', () => {
-    console.log('Connected to MQTT broker');
+    console.log(`Connected to MQTT broker at ${globalMqttConfig.host}:${globalMqttConfig.port}`);
     
     // Subscribe ke topik untuk semua perangkat dan semua jenis data
     mqttClient.subscribe('sleepsense/device/+/+', (err) => {
