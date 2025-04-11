@@ -47,15 +47,20 @@ const handleMqttMessage = async (topic: string, message: Buffer) => {
     // Process data berdasarkan jenisnya
     if (dataType === 'finger') {
       // Proses data sensor jari (pulse oximeter)
-      await processFingerSensorData(device.id, device.patient_id, payload);
+      // Mendukung format array langsung atau format dengan properti data
+      const dataToProcess = payload.data || payload;
+      await processFingerSensorData(device.id, device.patient_id, dataToProcess);
     } else if (dataType === 'belt') {
       // Proses data sensor belt (ECG, thoracic, breathing)
-      await processBeltSensorData(device.id, device.patient_id, payload);
+      // Mendukung format array langsung atau format dengan properti data
+      const dataToProcess = payload.data || payload;
+      await processBeltSensorData(device.id, device.patient_id, dataToProcess);
     } else if (dataType === 'status') {
       // Update status device
       await deviceModel.update(device.id, {
         last_sync: new Date(),
-        battery_level: payload.battery_level,
+        // battery_level diambil jika ada, jika tidak gunakan nilai yang ada
+        battery_level: payload.battery_level !== undefined ? payload.battery_level : device.battery_level,
         status: payload.status || 'active'
       });
     } else if (dataType === 'data') {
@@ -81,9 +86,22 @@ const handleMqttMessage = async (topic: string, message: Buffer) => {
 // Proses data sensor jari (pulse oximeter)
 const processFingerSensorData = async (deviceId: number, patientId: number, payload: any) => {
   try {
-    // Verifikasi format data
-    if (!Array.isArray(payload.data)) {
-      throw new Error('Invalid finger sensor data format');
+    // Verifikasi format data - mendukung kedua format (lama dan baru)
+    let dataArray: any[] = [];
+    
+    if (Array.isArray(payload)) {
+      // Format baru - payload langsung berupa array
+      dataArray = payload;
+    } else if (payload.data && Array.isArray(payload.data)) {
+      // Format lama - payload berisi field "data" yang merupakan array
+      dataArray = payload.data;
+    } else {
+      throw new Error('Invalid finger sensor data format - expected array or object with data array');
+    }
+    
+    if (dataArray.length === 0) {
+      console.warn('Empty finger sensor data array received');
+      return; // Tidak ada data untuk diproses
     }
     
     // Cari atau buat data tidur untuk hari ini
@@ -102,17 +120,23 @@ const processFingerSensorData = async (deviceId: number, patientId: number, payl
     }
     
     // Prepare data untuk batch insertion
-    const pulseOxBatch = payload.data.map((item: any) => ({
+    const pulseOxBatch = dataArray.map((item: any) => ({
       sleep_data_id: sleepData.id,
       timestamp: new Date(item.timestamp),
       spo2: item.spo2,
       heart_rate: item.bpm, // Map bpm to heart_rate
-      raw_ir: null,
-      raw_red: null
+      raw_ir: item.raw_ir || null,
+      raw_red: item.raw_red || null
     }));
     
     // Insert data ke tabel pulse_ox_data
     await sensorDataModel.batchCreatePulseOxData(pulseOxBatch);
+    
+    // Update device status jika perlu - tanpa battery_level
+    await deviceModel.update(deviceId, {
+      last_sync: new Date(),
+      status: 'active'
+    });
     
   } catch (error) {
     console.error('Error processing finger sensor data:', error);
@@ -123,9 +147,22 @@ const processFingerSensorData = async (deviceId: number, patientId: number, payl
 // Proses data sensor belt (ECG, thoracic, breathing)
 const processBeltSensorData = async (deviceId: number, patientId: number, payload: any) => {
   try {
-    // Verifikasi format data
-    if (!Array.isArray(payload.data)) {
-      throw new Error('Invalid belt sensor data format');
+    // Verifikasi format data - mendukung kedua format (lama dan baru)
+    let dataArray: any[] = [];
+    
+    if (Array.isArray(payload)) {
+      // Format baru - payload langsung berupa array
+      dataArray = payload;
+    } else if (payload.data && Array.isArray(payload.data)) {
+      // Format lama - payload berisi field "data" yang merupakan array
+      dataArray = payload.data;
+    } else {
+      throw new Error('Invalid belt sensor data format - expected array or object with data array');
+    }
+    
+    if (dataArray.length === 0) {
+      console.warn('Empty belt sensor data array received');
+      return; // Tidak ada data untuk diproses
     }
     
     // Cari atau buat data tidur untuk hari ini
@@ -148,7 +185,7 @@ const processBeltSensorData = async (deviceId: number, patientId: number, payloa
     const thoracicBatch: any[] = [];
     const breathingBatch: any[] = [];
     
-    for (const item of payload.data) {
+    for (const item of dataArray) {
       const timestamp = new Date(item.timestamp);
       
       // Add to ECG batch if ecg data exists
@@ -184,6 +221,12 @@ const processBeltSensorData = async (deviceId: number, patientId: number, payloa
     await sensorDataModel.batchCreateEcgData(ecgBatch);
     await sensorDataModel.batchCreateThoracicData(thoracicBatch);
     await sensorDataModel.batchCreateBreathingData(breathingBatch);
+    
+    // Update device status - tanpa battery_level
+    await deviceModel.update(deviceId, {
+      last_sync: new Date(),
+      status: 'active'
+    });
     
   } catch (error) {
     console.error('Error processing belt sensor data:', error);

@@ -5,7 +5,7 @@ export const env = {
   port: process.env.PORT || 5000,
   nodeEnv: process.env.NODE_ENV || 'development',
   db: {
-    host: process.env.DB_HOST || 'localhost',
+    host: process.env.DB_HOST || '0.0.0.0',
     port: parseInt(process.env.DB_PORT || '5432', 10),
     user: process.env.DB_USER || 'postgres',
     password: process.env.DB_PASSWORD || '1234',
